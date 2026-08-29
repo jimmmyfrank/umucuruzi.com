@@ -2,7 +2,7 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
 // Import models
-const User = require('./User')(sequelize, DataTypes);
+const User = require('./user')(sequelize, DataTypes);
 const TraderProfile = require('./TraderProfile')(sequelize, DataTypes);
 const Category = require('./Category')(sequelize, DataTypes);
 const Product = require('./Product')(sequelize, DataTypes);
