@@ -84,11 +84,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || 'Internal Server Error' });
 });
 
+// 1. Start the server immediately so Render detects the open port instantly
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📁 Uploads directory: ${uploadDir}`);
+});
+
+// 2. Run the database sync independently in the background
 sequelize.sync({ alter: false })
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📁 Uploads directory: ${uploadDir}`);
-    });
+    console.log('Database connected and synced successfully 🎉');
   })
-  .catch(err => console.error('DB connection failed:', err));
+  .catch(err => {
+    console.error('DB connection failed:', err);
+  });
