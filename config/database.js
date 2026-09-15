@@ -2,12 +2,12 @@ const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
 const sequelize = new Sequelize(
-  process.env.DB_NAME || "bowrstfi01ymihlsu4oj",
-  process.env.DB_USER || "uyor7bojzohrr2to", 
-  process.env.DB_PASSWORD || "uyor7bojzohrr2to",
+  process.env.MYSQL_ADDON_DB
+  process.env.MYSQL_ADDON_USER, 
+  process.env.MYSQL_ADDON_PASSWORD,
   {
-    host: process.env.DB_HOST || "bowrstfi01ymihlsu4oj-mysql.services.clever-cloud.com",
-    port: process.env.DB_PORT || 3306,
+    host: process.env.MYSQL_ADDON_HOST ,
+    port: process.env.MYSQL_ADDON_PORT,
     dialect: 'mysql',
     logging: false,
     dialectOptions: {
