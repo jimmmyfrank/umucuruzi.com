@@ -2,11 +2,11 @@ const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
 const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
+  process.env.DB_NAME || "bowrstfi01ymihlsu4oj",
+  process.env.DB_USER || "uyor7bojzohrr2to", 
+  process.env.DB_PASSWORD || "uyor7bojzohrr2to",
   {
-    host: process.env.DB_HOST,
+    host: process.env.DB_HOST || "bowrstfi01ymihlsu4oj-mysql.services.clever-cloud.com",
     port: process.env.DB_PORT || 3306,
     dialect: 'mysql',
     logging: false,
