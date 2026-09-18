@@ -5,9 +5,11 @@ const role = require('../middleware/role');
 
 const {
   getAllMarkets, getMarketById, createMarket, updateMarket,
-  joinMarket, leaveMarket, getMyMarkets
+  joinMarket, leaveMarket, getMyMarkets, getNearbyMarkets
 } = require('../controllers/marketController');
 
+
+router.get('/nearby', getNearbyMarkets);   // ← public, no auth
 // ─── Public routes ────────────────────────────────────────────────────
 router.get('/', getAllMarkets);
 
