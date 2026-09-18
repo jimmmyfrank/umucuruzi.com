@@ -135,3 +135,70 @@ exports.leaveMarket = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// ─── Nearby markets (same pattern as traders) ────────────────────
+const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+exports.getNearbyMarkets = async (req, res) => {
+  try {
+    const { lat, lng, radius = 50, sort = 'distance' } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'lat and lng are required' });
+    }
+
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const maxRadius = parseFloat(radius);
+
+    const markets = await Market.findAll({
+      where: { is_active: true },
+    });
+
+    const withDistance = markets.map((m) => {
+      const plain = m.toJSON();
+      const coords = plain.coordinates;
+      let distance = null;
+      if (coords && typeof coords === 'string') {
+        const [latStr, lngStr] = coords.split(',').map((s) => s.trim());
+        const pLat = parseFloat(latStr);
+        const pLng = parseFloat(lngStr);
+        if (!isNaN(pLat) && !isNaN(pLng)) {
+          distance = getDistanceKm(userLat, userLng, pLat, pLng);
+        }
+      }
+      return {
+        ...plain,
+        distance,
+        withinRadius: distance !== null && distance <= maxRadius,
+      };
+    });
+
+    if (sort === 'distance') {
+      withDistance.sort((a, b) => {
+        const da = a.distance === null ? Infinity : a.distance;
+        const db = b.distance === null ? Infinity : b.distance;
+        return da - db;
+      });
+    } else if (sort === 'name') {
+      withDistance.sort((a, b) =>
+        String(a.name || '').localeCompare(String(b.name || ''))
+      );
+    }
+
+    res.json(withDistance);
+  } catch (err) {
+    console.error('getNearbyMarkets error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
