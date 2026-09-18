@@ -1,61 +1,76 @@
-const { Review, Product, User, TraderProfile } = require('../models');
+const { Product, User, TraderProfile, Market, Category } = require('../models');
+const { Op } = require('sequelize');
 
-exports.createReview = async (req, res) => {
+exports.searchAll = async (req, res) => {
   try {
-    const { target_type, target_id, rating, comment } = req.body;
-    // Check target exists
-    if (target_type === 'product') {
-      const product = await Product.findByPk(target_id);
-      if (!product) return res.status(404).json({ error: 'Product not found' });
-    } else if (target_type === 'trader') {
-      const trader = await User.findOne({ where: { id: target_id, role: 'trader' } });
-      if (!trader) return res.status(404).json({ error: 'Trader not found' });
-    } else {
-      return res.status(400).json({ error: 'Invalid target_type' });
+    const { q, limit = 20 } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.json({ products: [], traders: [], markets: [], total: 0 });
     }
 
-    // Check if user already reviewed this target
-    const existing = await Review.findOne({
-      where: { customer_id: req.user.id, target_type, target_id }
-    });
-    if (existing) {
-      // Update instead
-      await existing.update({ rating, comment });
-      return res.json(existing);
-    }
+    const searchTerm = q.trim();
+    const like = `%${searchTerm}%`;
 
-    const review = await Review.create({
-      customer_id: req.user.id,
-      target_type,
-      target_id,
-      rating,
-      comment
-    });
-    // Update trader's average rating if target is trader
-    if (target_type === 'trader') {
-      const reviews = await Review.findAll({ where: { target_type: 'trader', target_id } });
-      const avg = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
-      await TraderProfile.update({ rating_avg: avg }, { where: { user_id: target_id } });
-    }
-    res.status(201).json(review);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-exports.getReviews = async (req, res) => {
-  try {
-    const { target_type, target_id } = req.query;
-    if (!target_type || !target_id) {
-      return res.status(400).json({ error: 'target_type and target_id required' });
-    }
-    const reviews = await Review.findAll({
-      where: { target_type, target_id },
-      include: [{ model: User, as: 'customer', attributes: ['id', 'full_name'] }],
+    // ─── Products ──────────────────────────────────────────────────
+    const products = await Product.findAll({
+      where: {
+        is_active: true,
+        [Op.or]: [
+          { name: { [Op.like]: like } },
+          { description: { [Op.like]: like } }
+        ]
+      },
+      include: [
+        { model: Category, attributes: ['id', 'name'] },
+        { model: User, as: 'trader', attributes: ['id', 'full_name', 'username'] }
+      ],
+      limit: parseInt(limit),
       order: [['created_at', 'DESC']]
     });
-    res.json(reviews);
+
+    // ─── Traders ──────────────────────────────────────────────────
+    const traders = await User.findAll({
+      where: {
+        role: 'trader',
+        is_active: true,
+        [Op.or]: [
+          { full_name: { [Op.like]: like } },
+          { username: { [Op.like]: like } },
+          { '$TraderProfile.shop_name$': { [Op.like]: like } },
+          { '$TraderProfile.district$': { [Op.like]: like } },
+          { '$TraderProfile.sector$': { [Op.like]: like } }
+        ]
+      },
+      include: [{ model: TraderProfile }],
+      limit: parseInt(limit),
+      order: [['created_at', 'DESC']]
+    });
+
+    // ─── Markets ──────────────────────────────────────────────────
+    const markets = await Market.findAll({
+      where: {
+        is_active: true,
+        [Op.or]: [
+          { name: { [Op.like]: like } },
+          { description: { [Op.like]: like } },
+          { district: { [Op.like]: like } },
+          { sector: { [Op.like]: like } },
+          { cell: { [Op.like]: like } },
+          { village: { [Op.like]: like } }
+        ]
+      },
+      limit: parseInt(limit),
+      order: [['created_at', 'DESC']]
+    });
+
+    res.json({
+      products,
+      traders,
+      markets,
+      total: products.length + traders.length + markets.length
+    });
   } catch (err) {
+    console.error('Search error:', err);
     res.status(500).json({ error: err.message });
   }
 };
