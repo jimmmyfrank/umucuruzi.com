@@ -1,29 +1,43 @@
-const { TraderProfile, Product, PriceTableItem, 
+const {
+  TraderProfile, Product, PriceTableItem,
   Order, OrderItem, User, Loyalty,
-   DeliveryAssignment, Category ,
-   Notification,
-  sequelize
-  } = require('../models');
+  DeliveryAssignment, Category, Notification,
+  BusinessCategory, sequelize,
+} = require('../models');
 const { Op } = require('sequelize');
+const QRCode = require('qrcode');
+const { sendPushNotification } = require('../utils/sendPushNotification');
 
+// ─── Helper: create an in-app notification ─────────────────────────
 const createNotification = async (userId, title, message) => {
   try {
     await Notification.create({
       user_id: userId,
       type: 'push',
       title,
-      message
+      message,
     });
   } catch (err) {
     console.error('Error creating notification:', err);
   }
 };
 
-const { sendPushNotification } = require('../utils/sendPushNotification');
+// ─── Helper: haversine distance (km) ───────────────────────────────
+const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
-
-
-// ---------- Profile ----------
+// ═══════════════════════════════════════════════════════════════════
+//  PROFILE
+// ═══════════════════════════════════════════════════════════════════
 exports.getProfile = async (req, res) => {
   try {
     const profile = await TraderProfile.findOne({ where: { user_id: req.user.id } });
@@ -45,54 +59,10 @@ exports.updateProfile = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-exports.getTraderOrders = async (req, res) => {
-  try {
-    const orders = await Order.findAll({
-      where: { trader_id: req.user.id },
-      include: [
-        {
-          model: User,
-          as: 'customer',
-          attributes: ['id', 'full_name', 'username', 'phone', 'email', 'profile_image']
-        },
-        {
-          model: OrderItem,
-          include: [{ model: Product }]
-        },
-        {
-          model: DeliveryAssignment,
-          include: [{ model: User, as: 'agent', attributes: ['id', 'full_name', 'username'] }]
-        }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-    res.json(orders);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-};
 
-// Add this function after getProducts
-exports.getProductById = async (req, res) => {
-  try {
-    const product = await Product.findOne({
-      where: { id: req.params.id, trader_id: req.user.id },
-      include: [{ model: Category, attributes: ['id', 'name'] }]
-    });
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json(product);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
-// ... (other functions unchanged)
-
+// ═══════════════════════════════════════════════════════════════════
+//  PRODUCTS
+// ═══════════════════════════════════════════════════════════════════
 exports.createProduct = async (req, res) => {
   try {
     const { name, description, price, category_id, stock_quantity } = req.body;
@@ -101,14 +71,12 @@ exports.createProduct = async (req, res) => {
     if (!name || !price) {
       return res.status(400).json({ error: 'Product name and price are required' });
     }
-
     const parsedPrice = parseFloat(price);
     if (isNaN(parsedPrice) || parsedPrice < 0) {
       return res.status(400).json({ error: 'Price must be a positive number' });
     }
 
-    // ✅ Save image URLs (relative paths)
-    const imagePaths = files.map(file => `/uploads/${file.filename}`);
+    const imagePaths = files.map((f) => `/uploads/${f.filename}`);
 
     let categoryId = null;
     if (category_id) {
@@ -124,7 +92,7 @@ exports.createProduct = async (req, res) => {
       price: parsedPrice,
       category_id: categoryId,
       stock_quantity: parseInt(stock_quantity) || 0,
-      images: imagePaths,  // ← array of strings
+      images: imagePaths,
       is_active: true,
     });
 
@@ -140,7 +108,7 @@ exports.getProducts = async (req, res) => {
     const products = await Product.findAll({
       where: { trader_id: req.user.id },
       include: [{ model: Category, attributes: ['id', 'name'] }],
-      order: [['created_at', 'DESC']]
+      order: [['created_at', 'DESC']],
     });
     res.json(products);
   } catch (err) {
@@ -148,31 +116,48 @@ exports.getProducts = async (req, res) => {
   }
 };
 
+exports.getProductById = async (req, res) => {
+  try {
+    const product = await Product.findOne({
+      where: { id: req.params.id, trader_id: req.user.id },
+      include: [{ model: Category, attributes: ['id', 'name'] }],
+    });
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.updateProduct = async (req, res) => {
   try {
-    const product = await Product.findOne({ where: { id: req.params.id, trader_id: req.user.id } });
+    const product = await Product.findOne({
+      where: { id: req.params.id, trader_id: req.user.id },
+    });
     if (!product) return res.status(404).json({ error: 'Product not found' });
 
-    const { name, description, price, category_id, stock_quantity, is_active, existing_images } = req.body;
+    const {
+      name, description, price, category_id,
+      stock_quantity, is_active, existing_images,
+    } = req.body;
     const files = req.files || [];
 
-    // Update basic fields
     if (price !== undefined) {
-      const parsedPrice = parseFloat(price);
-      if (isNaN(parsedPrice) || parsedPrice < 0) return res.status(400).json({ error: 'Invalid price' });
-      product.price = parsedPrice;
+      const parsed = parseFloat(price);
+      if (isNaN(parsed) || parsed < 0) return res.status(400).json({ error: 'Invalid price' });
+      product.price = parsed;
     }
     if (name !== undefined) product.name = name.trim();
     if (description !== undefined) product.description = description.trim();
     if (stock_quantity !== undefined) {
-      const parsedStock = parseInt(stock_quantity);
-      if (isNaN(parsedStock) || parsedStock < 0) return res.status(400).json({ error: 'Invalid stock' });
-      product.stock_quantity = parsedStock;
+      const s = parseInt(stock_quantity);
+      if (isNaN(s) || s < 0) return res.status(400).json({ error: 'Invalid stock' });
+      product.stock_quantity = s;
     }
     if (category_id !== undefined) {
       if (category_id) {
-        const category = await Category.findByPk(category_id);
-        if (!category) return res.status(400).json({ error: 'Category not found' });
+        const cat = await Category.findByPk(category_id);
+        if (!cat) return res.status(400).json({ error: 'Category not found' });
         product.category_id = category_id;
       } else {
         product.category_id = null;
@@ -180,20 +165,14 @@ exports.updateProduct = async (req, res) => {
     }
     if (is_active !== undefined) product.is_active = is_active;
 
-    // Handle images: merge existing and new
     let finalImages = [];
     if (existing_images) {
       try {
-        const parsedExisting = JSON.parse(existing_images);
-        if (Array.isArray(parsedExisting)) {
-          finalImages = parsedExisting;
-        }
-      } catch (e) {
-        // ignore
-      }
+        const parsed = JSON.parse(existing_images);
+        if (Array.isArray(parsed)) finalImages = parsed;
+      } catch (_) {}
     }
-    const newImagePaths = files.map(file => `/uploads/${file.filename}`);
-    finalImages = [...finalImages, ...newImagePaths];
+    finalImages = [...finalImages, ...files.map((f) => `/uploads/${f.filename}`)];
     product.images = finalImages;
 
     await product.save();
@@ -203,9 +182,12 @@ exports.updateProduct = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 exports.deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findOne({ where: { id: req.params.id, trader_id: req.user.id } });
+    const product = await Product.findOne({
+      where: { id: req.params.id, trader_id: req.user.id },
+    });
     if (!product) return res.status(404).json({ error: 'Product not found' });
     await product.destroy();
     res.json({ message: 'Product deleted' });
@@ -214,12 +196,14 @@ exports.deleteProduct = async (req, res) => {
   }
 };
 
-// ---------- Price Table ----------
+// ═══════════════════════════════════════════════════════════════════
+//  PRICE TABLE
+// ═══════════════════════════════════════════════════════════════════
 exports.getPriceTable = async (req, res) => {
   try {
     const items = await PriceTableItem.findAll({
       where: { trader_id: req.user.id },
-      order: [['sort_order', 'ASC']]
+      order: [['sort_order', 'ASC']],
     });
     res.json(items);
   } catch (err) {
@@ -242,7 +226,7 @@ exports.addPriceTableItem = async (req, res) => {
       product_name: product_name.trim(),
       unit: unit || null,
       price: parsedPrice,
-      sort_order: sort_order || 0
+      sort_order: sort_order || 0,
     });
     res.status(201).json(item);
   } catch (err) {
@@ -252,7 +236,9 @@ exports.addPriceTableItem = async (req, res) => {
 
 exports.updatePriceTableItem = async (req, res) => {
   try {
-    const item = await PriceTableItem.findOne({ where: { id: req.params.id, trader_id: req.user.id } });
+    const item = await PriceTableItem.findOne({
+      where: { id: req.params.id, trader_id: req.user.id },
+    });
     if (!item) return res.status(404).json({ error: 'Item not found' });
     await item.update(req.body);
     res.json(item);
@@ -263,7 +249,9 @@ exports.updatePriceTableItem = async (req, res) => {
 
 exports.deletePriceTableItem = async (req, res) => {
   try {
-    const item = await PriceTableItem.findOne({ where: { id: req.params.id, trader_id: req.user.id } });
+    const item = await PriceTableItem.findOne({
+      where: { id: req.params.id, trader_id: req.user.id },
+    });
     if (!item) return res.status(404).json({ error: 'Item not found' });
     await item.destroy();
     res.json({ message: 'Price item deleted' });
@@ -272,40 +260,9 @@ exports.deletePriceTableItem = async (req, res) => {
   }
 };
 
-// ---------- Orders ----------
-// ─── Customer: get their orders ────────────────────────────────────────
-exports.getCustomerOrders = async (req, res) => {
-  try {
-    const orders = await Order.findAll({
-      where: { customer_id: req.user.id },
-      include: [
-        {
-          model: User,
-          as: 'trader',
-          attributes: ['id', 'full_name', 'username', 'phone', 'email', 'profile_image'],
-          include: [{ model: TraderProfile, attributes: ['shop_name', 'district', 'sector'] }]
-        },
-        {
-          model: OrderItem,
-          include: [{ model: Product }]
-        },
-        {
-          model: DeliveryAssignment,
-          include: [{ model: User, as: 'agent', attributes: ['id', 'full_name', 'username'] }]
-        }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-    res.json(orders);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// ─── Trader: get their orders (for trader dashboard) ─────────────────
-// (If you have a separate controller for trader orders, update it similarly)
-// In traderController.js:
+// ═══════════════════════════════════════════════════════════════════
+//  ORDERS
+// ═══════════════════════════════════════════════════════════════════
 exports.getOrders = async (req, res) => {
   try {
     const orders = await Order.findAll({
@@ -314,18 +271,15 @@ exports.getOrders = async (req, res) => {
         {
           model: User,
           as: 'customer',
-          attributes: ['id', 'full_name', 'username', 'phone', 'email', 'profile_image']
+          attributes: ['id', 'full_name', 'username', 'phone', 'email', 'profile_image'],
         },
-        {
-          model: OrderItem,
-          include: [{ model: Product }]
-        },
+        { model: OrderItem, include: [{ model: Product }] },
         {
           model: DeliveryAssignment,
-          include: [{ model: User, as: 'agent', attributes: ['id', 'full_name', 'username'] }]
-        }
+          include: [{ model: User, as: 'agent', attributes: ['id', 'full_name', 'username'] }],
+        },
       ],
-      order: [['created_at', 'DESC']]
+      order: [['created_at', 'DESC']],
     });
     res.json(orders);
   } catch (err) {
@@ -333,25 +287,26 @@ exports.getOrders = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-// traderController.js
+
+exports.getTraderOrders = exports.getOrders; // alias
 
 exports.updateOrderStatus = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const orderId = req.params.id;
+    const { id } = req.params;
     const { status } = req.body;
     const traderId = req.user.id;
 
-    // Validate status
-    const validStatuses = ['pending', 'processing', 'ready', 'in_transit', 'delivered', 'cancelled'];
+    const validStatuses = [
+      'pending', 'processing', 'ready', 'in_transit', 'delivered', 'cancelled',
+    ];
     if (!validStatuses.includes(status)) {
       await transaction.rollback();
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    // Find order – must belong to this trader
     const order = await Order.findOne({
-      where: { id: orderId, trader_id: traderId },
+      where: { id, trader_id: traderId },
       transaction,
     });
     if (!order) {
@@ -359,10 +314,8 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // Update status
     await order.update({ order_status: status }, { transaction });
 
-    // If status is 'delivered', update delivery assignment if exists
     if (status === 'delivered') {
       const assignment = await DeliveryAssignment.findOne({
         where: { order_id: order.id },
@@ -373,16 +326,11 @@ exports.updateOrderStatus = async (req, res) => {
       }
     }
 
-    // Commit transaction
     await transaction.commit();
 
-    // ─── Notify customer (in-app + push) ──────────────────────────
     const title = `Order #${order.id} updated`;
     const message = `Your order status is now: ${status.replace('_', ' ').toUpperCase()}`;
-    await createNotification(order.customer_id, title, message, 'push', { orderId: order.id });
-
-    // Also notify trader (optional – maybe they want to know)
-    // await createNotification(traderId, `Order #${order.id} updated`, `You changed the status to ${status}`);
+    await createNotification(order.customer_id, title, message);
 
     res.json({ message: 'Order status updated', order });
   } catch (err) {
@@ -391,26 +339,25 @@ exports.updateOrderStatus = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-;
+
 exports.assignAgent = async (req, res) => {
   try {
     const order = await Order.findOne({
-      where: { id: req.params.id, trader_id: req.user.id }
+      where: { id: req.params.id, trader_id: req.user.id },
     });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const { agent_id } = req.body;
     if (!agent_id) return res.status(400).json({ error: 'Agent ID required' });
 
-    // Check agent exists and is active
-    const agent = await User.findOne({ where: { id: agent_id, role: 'agent', is_active: true } });
+    const agent = await User.findOne({
+      where: { id: agent_id, role: 'agent', is_active: true },
+    });
     if (!agent) return res.status(404).json({ error: 'Agent not found or inactive' });
 
-    // Assign agent to order
     order.delivery_agent_id = agent_id;
     await order.save();
 
-    // Create or update delivery assignment
     const assignment = await DeliveryAssignment.findOne({ where: { order_id: order.id } });
     if (assignment) {
       await assignment.update({ agent_id, status: 'pending', assigned_at: new Date() });
@@ -423,22 +370,24 @@ exports.assignAgent = async (req, res) => {
       });
     }
 
-    // Optionally notify agent (push notification)
-    // ...
-
     res.json({ message: 'Agent assigned successfully', order });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
-// ---------- Loyal Customers ----------
+
+// ═══════════════════════════════════════════════════════════════════
+//  LOYAL CUSTOMERS + DASHBOARD
+// ═══════════════════════════════════════════════════════════════════
 exports.getLoyalCustomers = async (req, res) => {
   try {
     const loyalties = await Loyalty.findAll({
       where: { trader_id: req.user.id },
-      include: [{ model: User, as: 'customer', attributes: ['id', 'full_name', 'username', 'phone', 'email'] }],
-      order: [['points', 'DESC']]
+      include: [
+        { model: User, as: 'customer', attributes: ['id', 'full_name', 'username', 'phone', 'email'] },
+      ],
+      order: [['points', 'DESC']],
     });
     res.json(loyalties);
   } catch (err) {
@@ -449,58 +398,166 @@ exports.getLoyalCustomers = async (req, res) => {
 exports.getDashboardStats = async (req, res) => {
   try {
     const traderId = req.user.id;
-
     const totalOrders = await Order.count({ where: { trader_id: traderId } });
-    const deliveredOrders = await Order.count({ 
-      where: { trader_id: traderId, order_status: 'delivered' } 
+    const deliveredOrders = await Order.count({
+      where: { trader_id: traderId, order_status: 'delivered' },
     });
     const totalProducts = await Product.count({ where: { trader_id: traderId } });
     const totalCustomers = await Order.count({
       where: { trader_id: traderId },
       distinct: true,
-      col: 'customer_id'
+      col: 'customer_id',
     });
-    const revenue = await Order.sum('final_amount', { 
-      where: { trader_id: traderId, order_status: 'delivered' } 
+    const revenue = await Order.sum('final_amount', {
+      where: { trader_id: traderId, order_status: 'delivered' },
     });
 
-    // Recent orders (last 5)
     const recentOrders = await Order.findAll({
       where: { trader_id: traderId },
       include: [{ model: User, as: 'customer', attributes: ['full_name'] }],
       order: [['created_at', 'DESC']],
-      limit: 5
+      limit: 5,
     });
 
-    res.json({ 
-      totalOrders, 
-      deliveredOrders, 
-      totalProducts, 
-      totalCustomers, 
+    res.json({
+      totalOrders,
+      deliveredOrders,
+      totalProducts,
+      totalCustomers,
       revenue: revenue || 0,
-      recentOrders
+      recentOrders,
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
-const QRCode = require('qrcode');
 
+// ═══════════════════════════════════════════════════════════════════
+//  QR CODE
+// ═══════════════════════════════════════════════════════════════════
 exports.getTraderQR = async (req, res) => {
   try {
-    const traderId = req.user.id; // from auth middleware
+    const traderId = req.user.id;
     const baseUrl = process.env.QR_BASE_URL || 'http://localhost:5000';
     const profileUrl = `${baseUrl}/trader/${traderId}`;
-
     const qrDataUrl = await QRCode.toDataURL(profileUrl);
 
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
-
     res.json({ qr: qrDataUrl });
   } catch (err) {
     console.error('QR generation error:', err);
     res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+//  NEARBY TRADERS
+// ═══════════════════════════════════════════════════════════════════
+exports.getNearbyTraders = async (req, res) => {
+  try {
+    const {
+      lat, lng,
+      radius = 50,
+      category,
+      sort = 'distance',
+      district,
+      sector,
+    } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'lat and lng are required' });
+    }
+
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const maxRadius = parseFloat(radius);
+
+    const traders = await User.findAll({
+      where: { role: 'trader', is_active: true },
+      attributes: [
+        'id', 'full_name', 'username', 'phone', 'email',
+        'profile_image', 'description',
+      ],
+      include: [{ model: TraderProfile, required: false }],
+    });
+
+    // 1. Category filter (soft match: trims whitespace, case-insensitive)
+    let filtered = traders;
+    if (category) {
+      const catLower = String(category).toLowerCase().trim();
+      filtered = filtered.filter((t) => {
+        const bc = (t.TraderProfile?.business_category || '')
+          .toLowerCase()
+          .trim();
+        return bc === catLower;
+      });
+    }
+
+    // 2. Compute distance for those with GPS
+    const withDistance = filtered.map((t) => {
+      const plain = t.toJSON();
+      const coords = plain.TraderProfile?.coordinates;
+      let distance = null;
+      if (coords && typeof coords === 'string') {
+        const [latStr, lngStr] = coords.split(',').map((s) => s.trim());
+        const pLat = parseFloat(latStr);
+        const pLng = parseFloat(lngStr);
+        if (!isNaN(pLat) && !isNaN(pLng)) {
+          distance = getDistanceKm(userLat, userLng, pLat, pLng);
+        }
+      }
+      return { ...plain, distance };
+    });
+
+    // 3. Mark which are within radius — DON'T exclude them anymore
+    const withFlag = withDistance.map((t) => {
+      const withinRadius =
+        t.distance !== null && t.distance <= maxRadius;
+      return { ...t, withinRadius };
+    });
+
+    // 4. Sort
+    if (sort === 'distance') {
+      withFlag.sort((a, b) => {
+        const da = a.distance === null ? Infinity : a.distance;
+        const db = b.distance === null ? Infinity : b.distance;
+        return da - db;
+      });
+    } else if (sort === 'rating') {
+      withFlag.sort(
+        (a, b) =>
+          (parseFloat(b.TraderProfile?.rating_avg) || 0) -
+          (parseFloat(a.TraderProfile?.rating_avg) || 0)
+      );
+    } else if (sort === 'name') {
+      withFlag.sort((a, b) =>
+        (a.TraderProfile?.shop_name || a.full_name || '').localeCompare(
+          b.TraderProfile?.shop_name || b.full_name || ''
+        )
+      );
+    }
+
+    res.json(withFlag);
+  } catch (err) {
+    console.error('getNearbyTraders error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+//  BUSINESS CATEGORIES (public)
+// ═══════════════════════════════════════════════════════════════════
+exports.getBusinessCategories = async (req, res) => {
+  try {
+    const cats = await BusinessCategory.findAll({
+      where: { is_active: true },
+      order: [['sort_order', 'ASC']],
+    });
+    res.json(cats);
+  } catch (err) {
+    console.error('getBusinessCategories error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
