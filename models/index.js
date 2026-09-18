@@ -1,8 +1,6 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-
-
 // Import models
 const User = require('./User')(sequelize, DataTypes);
 const TraderProfile = require('./TraderProfile')(sequelize, DataTypes);
@@ -23,6 +21,7 @@ const Review = require('./Review')(sequelize, DataTypes);
 const Advertisement = require('./Advertisement')(sequelize, DataTypes);
 const ReferralReward = require('./ReferralReward')(sequelize, DataTypes);
 const AppSetting = require('./AppSetting')(sequelize, DataTypes);
+const BusinessCategory = require('./BusinessCategory')(sequelize, DataTypes);
 
 // --- Associations ---
 
@@ -126,6 +125,7 @@ ReferralReward.belongsTo(User, { foreignKey: 'referred_user_id' });
 module.exports = {
   sequelize,
   User,
+  BusinessCategory,
   TraderProfile,
   Category,
   Product,
